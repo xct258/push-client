@@ -38,14 +38,14 @@ func RunDaemon(cfg *config.Config) int {
 func (d *Daemon) run() int {
 	cfg := d.cfg
 	fmt.Printf("push-client %s 启动中…\n  HTTP: %s\n  MQTT: %s\n  订阅: %v\n  反馈: %s\n  配置文件: %s\n",
-		config.Version, cfg.ServerURL, cfg.BrokerAddr(), cfg.SubscribeTopics(), cfg.FeedbackTopic, cfg.ConfigFile)
+		config.Version, cfg.ServerURL, cfg.BrokerURL(), cfg.SubscribeTopics(), cfg.FeedbackTopic, cfg.ConfigFile)
 
 	// 首次运行（无配置文件）或 -setup：进软件内交互配置向导
 	if !cfg.NoSetup && (cfg.ForceSetup || !cfg.ConfigFound) {
 		SetupWizard(cfg)
 		d.rest.BaseURL = cfg.ServerURL
 		d.rest.Token = cfg.PushToken
-		fmt.Printf("当前 MQTT: %s，订阅: %v\n", cfg.BrokerAddr(), cfg.SubscribeTopics())
+		fmt.Printf("当前 MQTT: %s，订阅: %v\n", cfg.BrokerURL(), cfg.SubscribeTopics())
 	}
 
 	// 启动前先健康检查（失败只告警，不退出，MQTT 可能仍可用）
@@ -127,7 +127,7 @@ func (d *Daemon) connectForeground() {
 		mc := d.newClient()
 		if err := mc.Connect(15 * time.Second); err != nil {
 			log.Printf("[fatal] MQTT 连接失败 %s: %v，5 秒后重试（可用 set mqtt <地址> 修改后自动重连）",
-				d.cfg.BrokerAddr(), err)
+				d.cfg.BrokerURL(), err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -143,12 +143,12 @@ func (d *Daemon) reconnect() {
 		for {
 			mc := d.newClient()
 			if err := mc.Connect(15 * time.Second); err != nil {
-				log.Printf("[warn] MQTT 重连失败 %s: %v，5 秒后重试", d.cfg.BrokerAddr(), err)
+				log.Printf("[warn] MQTT 重连失败 %s: %v，5 秒后重试", d.cfg.BrokerURL(), err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 			d.setMc(mc)
-			log.Printf("[ok] 已重连 %s，订阅 %v", d.cfg.BrokerAddr(), d.cfg.SubscribeTopics())
+			log.Printf("[ok] 已重连 %s，订阅 %v", d.cfg.BrokerURL(), d.cfg.SubscribeTopics())
 			return
 		}
 	}()
@@ -158,6 +158,8 @@ func (d *Daemon) newClient() *mqttc.Client {
 	cfg := d.cfg
 	return mqttc.New(mqttc.Option{
 		Broker: cfg.MQTTBroker, Port: cfg.MQTTPort, ClientID: cfg.MQTTClientID,
+		Scheme: cfg.MQTTScheme, Path: cfg.MQTTPath,
+		TLSInsecure: cfg.MQTTTLSInsec, TLSCAFile: cfg.MQTTCAFile,
 		User: cfg.MQTTUser, Pass: cfg.MQTTPass, QoS: cfg.QoS,
 		Topics: cfg.SubscribeTopics(), FeedbackTopic: cfg.FeedbackTopic,
 		OnMessage:   func(m mqttc.Message) { handleDownlink(cfg, m) },
@@ -319,13 +321,15 @@ func (d *Daemon) handleConsole(line string) bool {
 }
 
 // handleSet 软件内改配置并保存，改 MQTT 相关项后自动重连。
-// 用法: set mqtt <地址> | set mqtt-port <端口> | set server <URL> | set base <主题> |
+// 用法: set mqtt <地址> | set mqtt-scheme <tcp|ws|wss> | set mqtt-port <端口> |
 //
-//	set feedback <主题> | set server-name <名> | set extra <t1,t2> | set token <T>
+//	set mqtt-path <路径> | set mqtt-tls-insecure <true|false> | set mqtt-ca <文件> |
+//	set server <URL> | set base <主题> | set feedback <主题> |
+//	set server-name <名> | set extra <t1,t2> | set token <T>
 func (d *Daemon) handleSet(args []string) {
 	cfg := d.cfg
 	if len(args) < 1 {
-		fmt.Println("用法: set mqtt <地址> | set mqtt-port <端口> | set server <URL> | set base <主题> | set feedback <主题> | set server-name <名> | set extra <t1,t2> | set token <T>")
+		fmt.Println("用法: set mqtt <地址> | set mqtt-scheme <tcp|ws|wss> | set mqtt-port <端口> | set mqtt-path <路径> | set mqtt-tls-insecure <true|false> | set mqtt-ca <文件> | set server <URL> | set base <主题> | set feedback <主题> | set server-name <名> | set extra <t1,t2> | set token <T>")
 		return
 	}
 	needReconnect := false
@@ -340,6 +344,15 @@ func (d *Daemon) handleSet(args []string) {
 		}
 		cfg.MQTTBroker = val
 		needReconnect = true
+	case "mqtt-scheme", "scheme":
+		switch strings.ToLower(val) {
+		case "tcp", "ws", "wss":
+			cfg.MQTTScheme = strings.ToLower(val)
+		default:
+			fmt.Println("协议只能是 tcp/ws/wss")
+			return
+		}
+		needReconnect = true
 	case "mqtt-port", "port":
 		p, err := strconv.Atoi(val)
 		if err != nil || p <= 0 || p > 65535 {
@@ -347,6 +360,26 @@ func (d *Daemon) handleSet(args []string) {
 			return
 		}
 		cfg.MQTTPort = p
+		needReconnect = true
+	case "mqtt-path", "path":
+		if val == "" {
+			val = "/mqtt"
+		}
+		if !strings.HasPrefix(val, "/") {
+			val = "/" + val
+		}
+		cfg.MQTTPath = val
+		needReconnect = true
+	case "mqtt-tls-insecure", "tls-insecure":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			fmt.Println("用法: set mqtt-tls-insecure <true|false>")
+			return
+		}
+		cfg.MQTTTLSInsec = b
+		needReconnect = true
+	case "mqtt-ca", "ca":
+		cfg.MQTTCAFile = val
 		needReconnect = true
 	case "server", "url":
 		if val == "" {
@@ -382,12 +415,12 @@ func (d *Daemon) handleSet(args []string) {
 		}
 		needReconnect = true
 	default:
-		fmt.Println("未知配置项，可用: mqtt | mqtt-port | server | token | base | feedback | server-name | extra")
+		fmt.Println("未知配置项，可用: mqtt | mqtt-scheme | mqtt-port | mqtt-path | mqtt-tls-insecure | mqtt-ca | server | token | base | feedback | server-name | extra")
 		return
 	}
 	d.persist()
 	if needReconnect {
-		fmt.Println("正在重连", cfg.BrokerAddr(), "…")
+		fmt.Println("正在重连", cfg.BrokerURL(), "…")
 		d.reconnect()
 	}
 }
@@ -397,14 +430,20 @@ func printConfig(cfg *config.Config) {
   server        = %s
   token         = %s
   mqtt          = %s
+  mqtt-scheme   = %s
   mqtt-port     = %d
+  mqtt-path     = %s
+  tls-insecure  = %v
+  mqtt-ca       = %s
   base          = %s
   feedback      = %s
   server-name   = %s
   extra         = %s
 `,
 		cfg.ConfigFile, cfg.ServerURL, mask(cfg.PushToken),
-		cfg.MQTTBroker, cfg.MQTTPort, cfg.BaseTopic, cfg.FeedbackTopic,
+		cfg.MQTTBroker, cfg.MQTTScheme, cfg.MQTTPort, cfg.MQTTPath,
+		cfg.MQTTTLSInsec, cfg.MQTTCAFile,
+		cfg.BaseTopic, cfg.FeedbackTopic,
 		cfg.ServerName, strings.Join(cfg.ExtraTopics, ","))
 }
 

@@ -26,7 +26,14 @@ func SetupWizard(cfg *config.Config) {
 	fmt.Println("=== 初次使用配置向导（直接回车=使用[]内默认值）===")
 	cfg.ServerURL = strings.TrimRight(ask(r, "push-server HTTP 地址", cfg.ServerURL), "/")
 	cfg.MQTTBroker = ask(r, "MQTT broker 地址", cfg.MQTTBroker)
-	cfg.MQTTPort = askInt(r, "MQTT 端口", cfg.MQTTPort)
+	cfg.MQTTScheme = askScheme(r, cfg.MQTTScheme)
+	cfg.MQTTPort = askInt(r, "MQTT 端口（tcp=1883，ws/wss 常用 9001）", cfg.MQTTPort)
+	if cfg.MQTTScheme != "tcp" {
+		cfg.MQTTPath = ask(r, "WebSocket 路径", cfg.MQTTPath)
+		if strings.TrimSpace(cfg.MQTTPath) == "" {
+			cfg.MQTTPath = "/mqtt"
+		}
+	}
 	cfg.BaseTopic = strings.Trim(ask(r, "下行基主题", cfg.BaseTopic), "/")
 	cfg.FeedbackTopic = strings.Trim(ask(r, "上行反馈主题", cfg.FeedbackTopic), "/")
 	cfg.ServerName = ask(r, "补拉 server_name", cfg.ServerName)
@@ -56,4 +63,19 @@ func askInt(r *bufio.Reader, label string, def int) int {
 		fmt.Println("输入非法，保持默认值", def)
 	}
 	return def
+}
+
+func askScheme(r *bufio.Reader, def string) string {
+	fmt.Printf("MQTT 协议 tcp/ws/wss [%s]: ", def)
+	line, _ := r.ReadString('\n')
+	switch s := strings.ToLower(strings.TrimSpace(line)); s {
+	case "", "tcp", "ws", "wss":
+		if s == "" {
+			return def
+		}
+		return s
+	default:
+		fmt.Println("输入非法，保持默认值", def)
+		return def
+	}
 }

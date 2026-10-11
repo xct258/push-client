@@ -60,6 +60,30 @@ daemon 内命令: done <id> | snooze <id> [分钟] | tasks | records | get | set
 | `-config` | — | `config.yaml` |
 | `-no-notify` | — | false |
 
+## WSS / WS 支持
+
+服务端 mosquitto 同时开了 TCP（1883）和 WebSocket（`MQTT_WS_PORT`，默认 9001），
+本客户端三种协议都支持，GUI 设置页或命令行都能切：
+
+| 场景 | 协议 | 端口 | 路径 | TLS |
+|---|---|---|---|---|
+| 内网直连（默认） | tcp | 1883 | — | — |
+| 公网/反代穿透（明文） | ws | 9001 | /mqtt | — |
+| 公网加密（nginx/caddy 终端） | wss | 443/9001 | /mqtt | 系统根证书 |
+| 内网自签证书测试 | wss | 9001 | /mqtt | 勾"跳过校验"或填 CA 文件 |
+
+```bat
+:: 命令行
+push-client.exe -mqtt-scheme wss -mqtt-port 9001 -mqtt-tls-insecure daemon
+:: daemon 内运行时切换（自动重连）
+set mqtt-scheme wss
+set mqtt-port 9001
+set mqtt-tls-insecure true
+```
+
+注意：wss 默认做严格证书校验（配错 CA 会连不上并自动降级 REST，走不通时看日志），
+只有自签/内网测试才开跳过校验。
+
 ## 协议对照（与服务端一致）
 
 - 下行主题 `{base}/{task_id}`（如 `taskops/todo/7`），payload 纯文本 `【待办提醒】标题\n正文`，零解析展示，尾段取整即 `task_id`
@@ -69,7 +93,7 @@ daemon 内命令: done <id> | snooze <id> [分钟] | tasks | records | get | set
 ## Windows 运行无反应？
 
 1. 确认下载的是 `push-client.exe`（不是无后缀的 `push-client`，那是 Linux 版）。
-   启动第一行会打印 `push-client v0.4.0`，对不上就是旧包，重新下载。
+   启动第一行会打印 `push-client v0.5.0`，对不上就是旧包，重新下载。
 2. 右键 exe → 属性 → 勾选底部"解除锁定"（如有）→ 确定；SmartScreen 拦截点"更多信息→仍要运行"。
 3. 用 `cmd` 进目录跑 `push-client.exe daemon`，看窗口第一屏的 HTTP/MQTT 地址，
    连不上会每 5 秒重试并打印原因，此时用 `set mqtt <正确地址>` 直接修正。

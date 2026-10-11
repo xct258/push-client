@@ -17,7 +17,7 @@
 //
 // 全局旗标（也可走 config.yaml / 环境变量，优先级：旗标 > 环境 > 文件）：
 //
-//	-server, -mqtt, -mqtt-port, -base, -feedback, -server-name, -token, -extra, -config
+//	-server, -mqtt, -mqtt-scheme, -mqtt-port, -mqtt-path, -base, -feedback, -server-name, -token, -extra, -config
 package main
 
 import (
@@ -58,7 +58,11 @@ func usage() {
 全局旗标:
   -server ADDR     push-server 地址 (默认 http://127.0.0.1:8383)
   -mqtt HOST       MQTT broker (默认 127.0.0.1)
-  -mqtt-port PORT  MQTT 端口 (默认 1883)
+  -mqtt-scheme S   tcp | ws | wss (默认 tcp)
+  -mqtt-port PORT  MQTT 端口 (tcp 默认 1883，ws/wss 常用 9001)
+  -mqtt-path P     ws/wss 的 HTTP 路径 (默认 /mqtt)
+  -mqtt-tls-insecure  wss 自签证书跳过校验（仅内网/测试）
+  -mqtt-ca FILE    wss 自定义 CA 证书文件
   -base TOPIC      下行基主题 (默认 taskops/todo)
   -feedback TOPIC  上行反馈主题 (默认 taskops/feedback)
   -server-name N   补拉过滤 (默认 taskops)
@@ -240,6 +244,8 @@ func runFeedback(cfg *config.Config, rest *api.Client, args []string, action str
 	// 尝试 MQTT 上行
 	mc := mqttc.New(mqttc.Option{
 		Broker: cfg.MQTTBroker, Port: cfg.MQTTPort, ClientID: cfg.MQTTClientID,
+		Scheme: cfg.MQTTScheme, Path: cfg.MQTTPath,
+		TLSInsecure: cfg.MQTTTLSInsec, TLSCAFile: cfg.MQTTCAFile,
 		User: cfg.MQTTUser, Pass: cfg.MQTTPass, QoS: cfg.QoS,
 		Topics: nil, FeedbackTopic: cfg.FeedbackTopic,
 	})

@@ -10,6 +10,17 @@ push_token: ""
 # MQTT broker（与服务端 mosquitto 同一台）
 mqtt_broker: "127.0.0.1"
 mqtt_port: 1883
+# 协议：tcp | ws | wss
+#   tcp：直连 1883（默认，内网用）
+#   ws ：WebSocket 明文，端口常用 9001（服务端 mosquitto 的 MQTT_WS_PORT）
+#   wss：WebSocket+TLS，broker 前有 nginx/caddy 等 TLS 终端时用
+mqtt_scheme: "tcp"
+# ws/wss 的 HTTP 路径（mosquitto 默认 /mqtt）
+mqtt_path: "/mqtt"
+# wss 自签证书跳过校验（仅内网/测试用，生产请配 mqtt_ca_file）
+mqtt_tls_insecure: false
+# wss 自定义 CA 证书文件路径（与 insecure 互斥，填了就走严格校验）
+mqtt_ca_file: ""
 mqtt_client_id: ""   # 空=自动生成 push-client-xxxx
 mqtt_user: ""
 mqtt_password: ""

@@ -59,8 +59,10 @@ type UI struct {
 	recordDetail *widget.Label
 
 	// 设置页
-	eServer, eToken, eMqtt, ePort, eBase, eFeedback, eServerName, eExtra *widget.Entry
-	status                                                               *widget.Label
+	eServer, eToken, eMqtt, ePort, eScheme, ePath, eCA *widget.Entry
+	chkInsecure                                        *widget.Check
+	eBase, eFeedback, eServerName, eExtra              *widget.Entry
+	status                                             *widget.Label
 }
 
 // Build 在给定 fyne.App 上组装界面（测试可用 test.NewApp 传入）。
@@ -91,7 +93,7 @@ func Build(a fyne.App, cfg *config.Config) *UI {
 // Run 启动 GUI（阻塞到窗口退出）。窗口先出现，MQTT 在后台连接，网络再慢也不白屏。
 func Run(cfg *config.Config) int {
 	fmt.Printf("push-client %s 图形界面启动中…\n  HTTP: %s\n  MQTT: %s\n  配置文件: %s\n  %s\n",
-		config.Version, cfg.ServerURL, cfg.BrokerAddr(), cfg.ConfigFile, FontStatus())
+		config.Version, cfg.ServerURL, cfg.BrokerURL(), cfg.ConfigFile, FontStatus())
 	a := app.NewWithID("xct258.push-client")
 	a.Settings().SetTheme(CJKTheme())
 	u := Build(a, cfg)
@@ -450,6 +452,17 @@ func (u *UI) settingTab() *fyne.Container {
 	u.eMqtt.SetText(c.MQTTBroker)
 	u.ePort = widget.NewEntry()
 	u.ePort.SetText(strconv.Itoa(c.MQTTPort))
+	u.eScheme = widget.NewEntry()
+	u.eScheme.SetText(c.MQTTScheme)
+	u.eScheme.SetPlaceHolder("tcp / ws / wss")
+	u.ePath = widget.NewEntry()
+	u.ePath.SetText(c.MQTTPath)
+	u.ePath.SetPlaceHolder("/mqtt（ws/wss 路径）")
+	u.chkInsecure = widget.NewCheck("wss 自签证书跳过校验（仅内网/测试）", nil)
+	u.chkInsecure.SetChecked(c.MQTTTLSInsec)
+	u.eCA = widget.NewEntry()
+	u.eCA.SetText(c.MQTTCAFile)
+	u.eCA.SetPlaceHolder("wss 自定义 CA 文件（可空）")
 	u.eBase = widget.NewEntry()
 	u.eBase.SetText(c.BaseTopic)
 	u.eFeedback = widget.NewEntry()
@@ -464,7 +477,11 @@ func (u *UI) settingTab() *fyne.Container {
 		widget.NewFormItem("push-server 地址", u.eServer),
 		widget.NewFormItem("X-Push-Token", u.eToken),
 		widget.NewFormItem("MQTT 地址", u.eMqtt),
+		widget.NewFormItem("MQTT 协议", u.eScheme),
 		widget.NewFormItem("MQTT 端口", u.ePort),
+		widget.NewFormItem("WS 路径", u.ePath),
+		widget.NewFormItem("TLS", u.chkInsecure),
+		widget.NewFormItem("CA 文件", u.eCA),
 		widget.NewFormItem("下行基主题", u.eBase),
 		widget.NewFormItem("上行反馈主题", u.eFeedback),
 		widget.NewFormItem("补拉 server_name", u.eServerName),
@@ -489,12 +506,28 @@ func (u *UI) saveSettings() {
 	c.ServerURL = strings.TrimRight(strings.TrimSpace(u.eServer.Text), "/")
 	c.PushToken = strings.TrimSpace(u.eToken.Text)
 	c.MQTTBroker = strings.TrimSpace(u.eMqtt.Text)
+	switch s := strings.ToLower(strings.TrimSpace(u.eScheme.Text)); s {
+	case "tcp", "ws", "wss":
+		c.MQTTScheme = s
+	default:
+		fyne.Do(func() { dialog.ShowError(fmt.Errorf("协议只能是 tcp/ws/wss"), u.win) })
+		return
+	}
 	if p, err := strconv.Atoi(strings.TrimSpace(u.ePort.Text)); err == nil && p > 0 && p <= 65535 {
 		c.MQTTPort = p
 	} else {
 		fyne.Do(func() { dialog.ShowError(fmt.Errorf("端口须为 1-65535"), u.win) })
 		return
 	}
+	c.MQTTPath = strings.TrimSpace(u.ePath.Text)
+	if c.MQTTPath == "" {
+		c.MQTTPath = "/mqtt"
+	}
+	if !strings.HasPrefix(c.MQTTPath, "/") {
+		c.MQTTPath = "/" + c.MQTTPath
+	}
+	c.MQTTTLSInsec = u.chkInsecure.Checked
+	c.MQTTCAFile = strings.TrimSpace(u.eCA.Text)
 	c.BaseTopic = strings.Trim(strings.TrimSpace(u.eBase.Text), "/")
 	c.FeedbackTopic = strings.Trim(strings.TrimSpace(u.eFeedback.Text), "/")
 	c.ServerName = strings.TrimSpace(u.eServerName.Text)
@@ -529,7 +562,7 @@ func (u *UI) connectLoop() {
 			continue
 		}
 		u.setMc(mc)
-		u.setStatus(fmt.Sprintf("已连接 %s · 订阅 %v", u.cfg.BrokerAddr(), u.cfg.SubscribeTopics()))
+		u.setStatus(fmt.Sprintf("已连接 %s · 订阅 %v", u.cfg.BrokerURL(), u.cfg.SubscribeTopics()))
 		return
 	}
 }
@@ -544,6 +577,8 @@ func (u *UI) newClient() *mqttc.Client {
 	c := u.cfg
 	return mqttc.New(mqttc.Option{
 		Broker: c.MQTTBroker, Port: c.MQTTPort, ClientID: c.MQTTClientID,
+		Scheme: c.MQTTScheme, Path: c.MQTTPath,
+		TLSInsecure: c.MQTTTLSInsec, TLSCAFile: c.MQTTCAFile,
 		User: c.MQTTUser, Pass: c.MQTTPass, QoS: c.QoS,
 		Topics: c.SubscribeTopics(), FeedbackTopic: c.FeedbackTopic,
 		OnMessage:   u.onMessage,
@@ -569,7 +604,7 @@ func (u *UI) closeMc() {
 func (u *UI) consumeReconnect() {
 	for range u.reconn {
 		u.catchUp()
-		u.setStatus(fmt.Sprintf("已连接 %s · 订阅 %v", u.cfg.BrokerAddr(), u.cfg.SubscribeTopics()))
+		u.setStatus(fmt.Sprintf("已连接 %s · 订阅 %v", u.cfg.BrokerURL(), u.cfg.SubscribeTopics()))
 	}
 }
 

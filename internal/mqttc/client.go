@@ -2,9 +2,12 @@ package mqttc
 
 import (
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,11 +30,15 @@ type Message struct {
 // Handler 收到下行后的回调。
 type Handler func(m Message)
 
-// Client MQTT 订阅+发布封装：自动重连（指数退避由 paho 接管），
+// Client MQTT 订阅+发布封装：支持 tcp/ws/wss，自动重连（指数退避由 paho 接管），
 // 重连后自动补订阅，重连成功回调供上层触发 REST 补拉。
 type Client struct {
 	broker        string
 	port          int
+	scheme        string // tcp | ws | wss（ssl/tls 归一为 tcp+TLS，见 normalizeScheme）
+	path          string // ws/wss 的 HTTP 路径，默认 /mqtt
+	tlsInsecure   bool   // wss 自签证书时跳过校验
+	tlsCAFile     string // wss 自定义 CA（与 tlsInsecure 互斥，优先 CA）
 	clientID      string
 	user, pass    string
 	qos           byte
@@ -50,6 +57,10 @@ type Client struct {
 type Option struct {
 	Broker        string
 	Port          int
+	Scheme        string // tcp | ws | wss，空= tcp
+	Path          string // ws/wss 路径，空= /mqtt
+	TLSInsecure   bool   // wss 自签证书跳过校验
+	TLSCAFile     string // wss 自定义 CA 文件
 	ClientID      string
 	User, Pass    string
 	QoS           byte
@@ -60,6 +71,18 @@ type Option struct {
 	OnReconnect chan<- struct{}
 }
 
+// normalizeScheme 归一协议名：ssl/tls→tcp 意义不大（paho 另有 ssl  scheme），这里只认 tcp/ws/wss。
+func normalizeScheme(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "ws", "wss", "tcp":
+		return strings.ToLower(strings.TrimSpace(s))
+	case "ssl", "tls", "mqtts":
+		return "ssl"
+	default:
+		return "tcp"
+	}
+}
+
 func New(o Option) *Client {
 	if o.ClientID == "" {
 		o.ClientID = "push-client-" + randHex(6)
@@ -67,13 +90,54 @@ func New(o Option) *Client {
 	if o.QoS > 2 {
 		o.QoS = 1
 	}
+	path := strings.TrimSpace(o.Path)
+	if path == "" {
+		path = "/mqtt"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	return &Client{
 		broker: o.Broker, port: o.Port, clientID: o.ClientID,
+		scheme: normalizeScheme(o.Scheme), path: path,
+		tlsInsecure: o.TLSInsecure, tlsCAFile: strings.TrimSpace(o.TLSCAFile),
 		user: o.User, pass: o.Pass, qos: o.QoS,
 		topics: o.Topics, feedbackTopic: o.FeedbackTopic,
 		onMsg: o.OnMessage, onRec: o.OnReconnect,
 		sentLog: map[int]time.Time{},
 	}
+}
+
+// BrokerURL 实际连接地址，如 tcp://host:1883、ws://host:9001/mqtt、wss://host:8883/mqtt。
+func (c *Client) BrokerURL() string {
+	if c.scheme == "ws" || c.scheme == "wss" {
+		return fmt.Sprintf("%s://%s:%d%s", c.scheme, c.broker, c.port, c.path)
+	}
+	if c.scheme == "ssl" {
+		return fmt.Sprintf("ssl://%s:%d", c.broker, c.port)
+	}
+	return fmt.Sprintf("tcp://%s:%d", c.broker, c.port)
+}
+
+// tlsConfig wss/ssl 的 TLS 配置：自签跳过 / 自定义 CA / 系统根证书。
+func (c *Client) tlsConfig() (*tls.Config, error) {
+	tc := &tls.Config{ServerName: c.broker}
+	if c.tlsInsecure {
+		tc.InsecureSkipVerify = true
+		return tc, nil
+	}
+	if c.tlsCAFile != "" {
+		pem, err := os.ReadFile(c.tlsCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("读取 CA 文件失败: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("CA 文件无有效证书: %s", c.tlsCAFile)
+		}
+		tc.RootCAs = pool
+	}
+	return tc, nil
 }
 
 func randHex(n int) string {
@@ -121,7 +185,14 @@ func Normalize(topic string, payload []byte, base string) Message {
 // Connect 阻塞直到连上或超时。连接丢失后 paho 自动重连。
 func (c *Client) Connect(timeout time.Duration) error {
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", c.broker, c.port))
+	opts.AddBroker(c.BrokerURL())
+	if c.scheme == "wss" || c.scheme == "ssl" {
+		tc, err := c.tlsConfig()
+		if err != nil {
+			return err
+		}
+		opts.SetTLSConfig(tc)
+	}
 	opts.SetClientID(c.clientID)
 	opts.SetCleanSession(true)
 	opts.SetAutoReconnect(true)
@@ -138,7 +209,7 @@ func (c *Client) Connect(timeout time.Duration) error {
 			return // 旧客户端（set 切换后已废弃），不补订阅不触发补拉
 		}
 		if len(c.topics) > 0 {
-			log.Printf("[mqtt] 已连接 %s:%d，订阅 %v", c.broker, c.port, c.topics)
+			log.Printf("[mqtt] 已连接 %s，订阅 %v", c.BrokerURL(), c.topics)
 			for _, t := range c.topics {
 				tk := c.cli.Subscribe(t, c.qos, c.route)
 				if !tk.WaitTimeout(10*time.Second) || tk.Error() != nil {
@@ -163,7 +234,7 @@ func (c *Client) Connect(timeout time.Duration) error {
 	c.cli = mqtt.NewClient(opts)
 	tk := c.cli.Connect()
 	if !tk.WaitTimeout(timeout) {
-		return fmt.Errorf("连接 MQTT 超时 %s:%d", c.broker, c.port)
+		return fmt.Errorf("连接 MQTT 超时 %s", c.BrokerURL())
 	}
 	return tk.Error()
 }
