@@ -21,6 +21,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -111,6 +112,7 @@ func main() {
 			return
 		}
 		fmt.Fprintln(os.Stderr, "配置错误:", err)
+		pauseBeforeExit()
 		os.Exit(2)
 	}
 
@@ -144,7 +146,22 @@ func main() {
 		usage()
 		code = 2
 	}
+	if code != 0 {
+		// Windows 双击运行时窗口会随进程退出而关闭，暂停等按键方便看清报错。
+		// 管道/stdin 已关闭时直接退出，不阻塞。
+		pauseBeforeExit()
+	}
 	os.Exit(code)
+}
+
+// pauseBeforeExit stdin 是控制台时等待一次回车；stdin 被重定向/关闭时立即返回。
+func pauseBeforeExit() {
+	fi, err := os.Stdin.Stat()
+	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "按回车键退出…")
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
 func runTasks(rest *api.Client, cfg *config.Config, args []string) int {

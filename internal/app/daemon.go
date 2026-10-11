@@ -21,6 +21,8 @@ import (
 // RunDaemon 常驻模式：MQTT 订阅 + Toast 弹窗 + 断线重连后 REST 补拉 + 控制台交互回执。
 // 控制台命令：done <id> | snooze <id> [分钟] | tasks | records | quit
 func RunDaemon(cfg *config.Config) int {
+	fmt.Printf("push-client 启动中…\n  HTTP: %s\n  MQTT: %s\n  订阅: %v\n  反馈: %s\n",
+		cfg.ServerURL, cfg.BrokerAddr(), cfg.SubscribeTopics(), cfg.FeedbackTopic)
 	rest := api.New(cfg.ServerURL, cfg.PushToken)
 
 	// 启动前先健康检查（失败只告警，不退出，MQTT 可能仍可用）
@@ -40,9 +42,16 @@ func RunDaemon(cfg *config.Config) int {
 		OnReconnect: reconn,
 	})
 
-	if err := mc.Connect(15 * time.Second); err != nil {
-		log.Printf("[fatal] MQTT 连接失败 %s: %v", cfg.BrokerAddr(), err)
-		return 1
+	// 连接失败无限重试：Windows 双击运行时直接退出会导致窗口一闪而过，
+	// 保持重试可让用户看到错误并有机会修正配置。
+	for {
+		if err := mc.Connect(15 * time.Second); err != nil {
+			log.Printf("[fatal] MQTT 连接失败 %s: %v，5 秒后重试（请检查 -mqtt/-mqtt-port、broker 是否启动、防火墙）",
+				cfg.BrokerAddr(), err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		break
 	}
 	defer mc.Disconnect()
 
