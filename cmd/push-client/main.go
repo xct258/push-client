@@ -42,13 +42,15 @@ func usage() {
   push-client [全局旗标] <命令> [参数]
 
 命令:
-  daemon                  常驻订阅+弹窗+补拉+交互回执（默认）
+  daemon                  常驻订阅+弹窗+补拉+交互回执（默认，首次运行进配置向导）
+  config                  交互修改配置并保存（改 MQTT 地址用这个）
   tasks                   查询定时任务
   records                 查询推送记录
   done <task_id>          反馈完成
   snooze <task_id> [分钟] 反馈推迟（默认60）
   push                    测试推送到 /api/push
   health                  健康检查
+  version                 显示版本
 
 全局旗标:
   -server ADDR     push-server 地址 (默认 http://127.0.0.1:8383)
@@ -59,7 +61,9 @@ func usage() {
   -server-name N   补拉过滤 (默认 taskops)
   -token T         X-Push-Token
   -extra T1,T2     附加订阅主题
-  -config PATH     配置文件 (默认 config.yaml)
+  -config PATH     配置文件 (默认 exe 同目录 config.yaml)
+  -setup           强制进入交互配置向导
+  -no-setup        跳过交互配置向导（服务/自动化用）
   -no-notify       只打印不弹窗
 
 示例:
@@ -81,6 +85,7 @@ func main() {
 	known := map[string]bool{
 		"daemon": true, "tasks": true, "records": true, "done": true,
 		"snooze": true, "push": true, "health": true, "help": true,
+		"version": true, "config": true,
 		"-h": true, "--help": true, "-help": true,
 	}
 	split := len(raw)
@@ -139,6 +144,10 @@ func main() {
 		code = runFeedback(cfg, rest, cmdArgs, "snooze")
 	case "push":
 		code = runPush(rest, cmdArgs)
+	case "version":
+		fmt.Println("push-client", app.Version)
+	case "config":
+		app.SetupWizard(cfg)
 	case "help", "-h", "--help", "-help":
 		usage()
 	default:

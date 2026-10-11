@@ -22,11 +22,23 @@ server_url: "http://192.168.1.10:8383"
 mqtt_broker: "192.168.1.10"
 ```
 
-3. 双击运行（无参数默认 `daemon`），或：
+3. 双击运行（无参数默认 `daemon`）。**首次运行会自动进入配置向导**，按提示输入
+   push-server 地址和 MQTT broker 地址（直接回车=用默认值），配置保存到 exe 同目录
+   `config.yaml`，以后不再询问：
 
 ```bat
 push-client.exe daemon
-push-client.exe -server http://192.168.1.10:8383 -mqtt 192.168.1.10 daemon
+push-client.exe config    :: 随时重新进向导改配置
+```
+
+4. 在软件内随时改配置（改 MQTT 地址不用重启，会自动重连）：
+
+```
+get                        :: 查看当前配置
+set mqtt 192.168.1.10      :: 改 MQTT 地址并自动重连
+set mqtt-port 1883
+set server http://192.168.1.10:8383
+quit
 ```
 
 4. 收到提醒后，在控制台输入回执：
@@ -71,6 +83,15 @@ push-client health
 - 下行主题 `{base}/{task_id}`（如 `taskops/todo/7`），payload 纯文本 `【待办提醒】标题\n正文`，零解析展示，尾段取整即 `task_id`
 - 上行主题 `taskops/feedback`，`{"task_id":7,"action":"done"}` / `{"task_id":7,"action":"snooze","snooze_minutes":60}`，QoS 1
 - 备用通道 `POST /api/task/{id}/feedback`，body 同上；补拉 `GET /api/tasks?status=pending&server_name=taskops`
+
+## Windows 运行无反应？
+
+1. 确认下载的是 `push-client.exe`（不是无后缀的 `push-client`，那是 Linux 版）。
+   启动第一行会打印 `push-client v0.3.0`，对不上就是旧包，重新下载。
+2. 右键 exe → 属性 → 勾选底部"解除锁定"（如有）→ 确定；SmartScreen 拦截点"更多信息→仍要运行"。
+3. 用 `cmd` 进目录跑 `push-client.exe daemon`，看窗口第一屏的 HTTP/MQTT 地址，
+   连不上会每 5 秒重试并打印原因，此时用 `set mqtt <正确地址>` 直接修正。
+4. 检查杀毒软件隔离区，新下载的无签名 exe 常被误杀，可加白名单。
 
 ## 编译
 

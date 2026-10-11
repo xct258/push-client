@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -42,6 +43,7 @@ type Client struct {
 	onRec chan<- struct{}
 
 	mu      sync.Mutex
+	closed  int32             // 1=已废弃（运行时切换配置后旧客户端回调直接丢弃，不补订阅不触发补拉）
 	sentLog map[int]time.Time // 反馈节流：同一 task 短时间重复 snooze 告警
 }
 
@@ -132,6 +134,9 @@ func (c *Client) Connect(timeout time.Duration) error {
 	}
 	first := true
 	opts.SetOnConnectHandler(func(_ mqtt.Client) {
+		if atomic.LoadInt32(&c.closed) == 1 {
+			return // 旧客户端（set 切换后已废弃），不补订阅不触发补拉
+		}
 		if len(c.topics) > 0 {
 			log.Printf("[mqtt] 已连接 %s:%d，订阅 %v", c.broker, c.port, c.topics)
 			for _, t := range c.topics {
@@ -164,7 +169,9 @@ func (c *Client) Connect(timeout time.Duration) error {
 }
 
 func (c *Client) route(_ mqtt.Client, msg mqtt.Message) {
-	// base 需要从 topics[0] 反推（首项恒为 base/#）。
+	if atomic.LoadInt32(&c.closed) == 1 {
+		return
+	}
 	base := ""
 	if len(c.topics) > 0 {
 		base = strings.TrimSuffix(c.topics[0], "/#")
@@ -216,6 +223,7 @@ func (c *Client) PublishRaw(topic string, payload []byte) error {
 }
 
 func (c *Client) Disconnect() {
+	atomic.StoreInt32(&c.closed, 1) // 先废弃：残留的 OnConnect/消息回调直接丢弃
 	if c.cli != nil && c.cli.IsConnected() {
 		c.cli.Unsubscribe(c.topics...)
 		c.cli.Disconnect(500)

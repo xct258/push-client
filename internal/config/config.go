@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -25,6 +26,12 @@ type Config struct {
 	ServerName    string   `yaml:"server_name"`    // 补拉过滤 server_name，默认 taskops
 	NotifyCmd     string   `yaml:"notify_cmd"`     // 收到提醒后额外执行的外部命令（可选，透传标题正文）
 	NoNotify      bool     `yaml:"no_notify"`      // 只打印不弹窗（调试用）
+
+	// 以下不落盘：运行态
+	ConfigFile  string `yaml:"-"`
+	ConfigFound bool   `yaml:"-"`
+	ForceSetup  bool   `yaml:"-"`
+	NoSetup     bool   `yaml:"-"`
 }
 
 func Default() *Config {
@@ -58,12 +65,50 @@ func configFileFlag(args []string) string {
 	return "config.yaml"
 }
 
+// resolveFile 定位配置文件：显式 -config 优先；默认名则先找 exe 同目录，再找当前目录。
+// 找不到时返回建议的保存位置（exe 同目录，Windows 双击场景最稳）。
+func resolveFile(explicit string) (path string, found bool) {
+	if explicit != "" && explicit != "config.yaml" {
+		if _, err := os.Stat(explicit); err == nil {
+			return explicit, true
+		}
+		return explicit, false
+	}
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "config.yaml")
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	if _, err := os.Stat("config.yaml"); err == nil {
+		return "config.yaml", true
+	}
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), "config.yaml"), false
+	}
+	return "config.yaml", false
+}
+
+// Save 把当前配置持久化到 path（供向导与 set 命令调用）。
+func Save(path string, cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0755)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 // Load 按“配置文件 -> 环境变量 -> 命令行”顺序合并。args 传 os.Args[1:]。
 func Load(args []string) (*Config, *flag.FlagSet, error) {
 	cfg := Default()
 
-	// 1. 配置文件（不存在不报错）
+	// 1. 配置文件（不存在不报错；默认名优先找 exe 同目录）
 	cfgFile := configFileFlag(args)
+	cfgFile, cfg.ConfigFound = resolveFile(cfgFile)
+	cfg.ConfigFile = cfgFile
 	if data, err := os.ReadFile(cfgFile); err == nil {
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, nil, fmt.Errorf("解析 %s 失败: %w", cfgFile, err)
@@ -108,8 +153,10 @@ func Load(args []string) (*Config, *flag.FlagSet, error) {
 	fs.StringVar(&cfg.NotifyCmd, "notify-cmd", cfg.NotifyCmd, "提醒后执行的外部命令")
 	fs.BoolVar(&cfg.NoNotify, "no-notify", cfg.NoNotify, "只打印不弹窗")
 	extra := fs.String("extra", strings.Join(cfg.ExtraTopics, ","), "附加订阅主题，逗号分隔")
+	fs.BoolVar(&cfg.ForceSetup, "setup", false, "强制进入交互配置向导")
+	fs.BoolVar(&cfg.NoSetup, "no-setup", false, "跳过交互配置向导（服务/自动化用）")
 	// 允许 -config 旗标存在但忽略实际加载（已在步骤1处理）
-	_ = fs.String("config", cfgFile, "配置文件路径")
+	_ = fs.String("config", configFileFlag(args), "配置文件路径")
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
 	}
