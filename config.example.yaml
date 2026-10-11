@@ -1,0 +1,33 @@
+# push-client 示例配置：复制为 config.yaml 后按需修改。
+# 优先级：命令行旗标 > 环境变量 > 本文件 > 默认值。
+# 环境变量：PUSH_SERVER_URL / PUSH_SERVER_TOKEN / MQTT_BROKER / MQTT_PORT / PUSH_BASE_TOPIC / PUSH_FEEDBACK_TOPIC
+
+# push-server HTTP 地址（管理页/REST 共用）
+server_url: "http://127.0.0.1:8383"
+# 写接口鉴权，服务端 PUSH_SERVER_TOKEN 为空则留空
+push_token: ""
+
+# MQTT broker（与服务端 mosquitto 同一台）
+mqtt_broker: "127.0.0.1"
+mqtt_port: 1883
+mqtt_client_id: ""   # 空=自动生成 push-client-xxxx
+mqtt_user: ""
+mqtt_password: ""
+
+# 下行基主题：订阅 base/#，主题尾段即 task_id
+base_topic: "taskops/todo"
+# 上行反馈主题
+feedback_topic: "taskops/feedback"
+# 通用推送附加订阅（/api/push 的任意 topic），示例：
+# extra_topics: ["test/topic", "notice/#"]
+extra_topics: []
+
+qos: 1
+# 补拉过滤 server_name
+server_name: "taskops"
+
+# 收到提醒后额外执行的外部命令（可选），参数：标题 正文 主题
+# notify_cmd: "C:\\tools\\myalert.exe"
+notify_cmd: ""
+# 只打印不弹窗（调试用）
+no_notify: false
