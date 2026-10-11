@@ -1,66 +1,48 @@
-# push-client — push-server 配套 Windows 客户端（Go）
+# push-client — push-server 配套 Windows 客户端（Go + GUI）
 
 配套服务端：https://github.com/xct258/push-server
 协议依据：服务端 `README.md`（REST）＋ `MQTT客户端设计.md`（下行纯文本/上行反馈）＋ `MQTT提醒双向同步方案.md`（任务状态机/补拉）。
 
+## 使用（图形界面，双击即用）
+
+1. 下载 `push-client.exe`（约 55MB，单文件，无需安装），双击运行。
+2. 顶部四个页签：
+   - **提醒**：收到的 MQTT 提醒列表，选中看正文，点**完成**/**推迟**（分钟可选 15/30/60/120/240）；
+     新提醒自动弹系统通知，关闭窗口缩到托盘，托盘可显示/退出。
+   - **定时任务**：pending 等任务列表，刷新查看，可直接完成/推迟。
+   - **推送记录**：服务端 `/records` 历史，刷新查看。
+   - **设置**：push-server 地址、MQTT 地址/端口、主题、token 都在这里改，
+     点**保存并重连**即生效（MQTT 自动重连），另有测试 HTTP 连接按钮。
+3. 配置自动存到 exe 同目录 `config.yaml`。中文字体自动用系统字体
+   （Windows 等线/黑体），设置页底部显示当前字体；找不到时可用
+   `PUSH_CLIENT_FONT` 环境变量指定一个 `.ttf` 字体文件。
+
+命令行模式仍保留（无头/服务用）：`push-client.exe daemon`，
+`tasks` / `records` / `done <id>` / `snooze <id> [分钟]` / `push` / `health` 照常用。
+
 ## 功能
 
+- **图形界面**：提醒列表＋完成/推迟按钮、定时任务、推送记录、设置页、托盘最小化、系统通知
 - **常驻订阅**：`taskops/todo/#`（QoS 1）＋ 可配置的通用推送附加主题（如 `test/topic`）
-- **系统 Toast 弹窗**：Windows 下走原生通知（beeep/SnoreToast），Linux/macOS 走各自通知中心
-- **一键回执**：控制台 `done <id>` / `snooze <id> [分钟]`，先走 MQTT 上行 `taskops/feedback`，失败自动降级 REST `POST /api/task/{id}/feedback`
-- **离线补拉**：启动与每次 MQTT 重连后自动 `GET /api/tasks?status=pending`，展示错过/未来 24h 的任务
+- **一键回执**：先走 MQTT 上行 `taskops/feedback`，失败自动降级 REST `POST /api/task/{id}/feedback`
+- **离线补拉**：启动与每次 MQTT 重连后自动 `GET /api/tasks?status=pending`，错过/24h 内到期的进提醒列表
 - **防连点**：同一任务 10s 内重复 snooze 本地拦截（服务端重复 snooze 会累加顺延）
-- **单文件**：`push-client.exe` 无运行时依赖，纯 Go（paho.mqtt.golang + beeep + yaml）
+- **单文件**：`push-client.exe` 无运行时依赖（Fyne + paho.mqtt.golang + beeep + yaml）
+- **命令行模式保留**：`daemon`（常驻，无头/服务用）及 `tasks` / `records` / `done` / `snooze` / `push` / `health`
 
-## 快速开始（Windows）
-
-1. 从 Release 下载 `push-client.exe`，或本地编译（见下）。
-2. 复制 `config.example.yaml` 为 `config.yaml`，改 `server_url` / `mqtt_broker` 为服务端地址：
-
-```yaml
-server_url: "http://192.168.1.10:8383"
-mqtt_broker: "192.168.1.10"
-```
-
-3. 双击运行（无参数默认 `daemon`）。**首次运行会自动进入配置向导**，按提示输入
-   push-server 地址和 MQTT broker 地址（直接回车=用默认值），配置保存到 exe 同目录
-   `config.yaml`，以后不再询问：
-
-```bat
-push-client.exe daemon
-push-client.exe config    :: 随时重新进向导改配置
-```
-
-4. 在软件内随时改配置（改 MQTT 地址不用重启，会自动重连）：
+## 命令行速查（daemon / 一次性命令仍可用）
 
 ```
-get                        :: 查看当前配置
-set mqtt 192.168.1.10      :: 改 MQTT 地址并自动重连
-set mqtt-port 1883
-set server http://192.168.1.10:8383
-quit
-```
-
-4. 收到提醒后，在控制台输入回执：
-
-```
-done 7          :: 完成任务 #7
-snooze 7 30     :: 推迟任务 #7 30 分钟（默认 60）
-tasks           :: 查看 pending 任务
-records         :: 查看最新推送记录
-quit            :: 退出
-```
-
-## 命令一览
-
-```
-push-client daemon                  常驻订阅+弹窗+补拉+交互回执（默认）
+push-client daemon                  命令行常驻+交互回执（首次运行进配置向导）
+push-client config                  交互修改配置并保存
 push-client tasks [--status pending] [--server-name taskops]
 push-client records [--server-name S] [--topic T] [--limit 20]
-push-client done <task_id>
-push-client snooze <task_id> [分钟]
+push-client done <task_id>          反馈完成
+push-client snooze <task_id> [分钟] 反馈推迟（默认60）
 push-client push -topic test/topic -message "hello"
 push-client health
+
+daemon 内命令: done <id> | snooze <id> [分钟] | tasks | records | get | set mqtt <地址> | quit
 ```
 
 全局旗标（优先级：旗标 > 环境变量 > config.yaml > 默认值）：
@@ -87,7 +69,7 @@ push-client health
 ## Windows 运行无反应？
 
 1. 确认下载的是 `push-client.exe`（不是无后缀的 `push-client`，那是 Linux 版）。
-   启动第一行会打印 `push-client v0.3.0`，对不上就是旧包，重新下载。
+   启动第一行会打印 `push-client v0.4.0`，对不上就是旧包，重新下载。
 2. 右键 exe → 属性 → 勾选底部"解除锁定"（如有）→ 确定；SmartScreen 拦截点"更多信息→仍要运行"。
 3. 用 `cmd` 进目录跑 `push-client.exe daemon`，看窗口第一屏的 HTTP/MQTT 地址，
    连不上会每 5 秒重试并打印原因，此时用 `set mqtt <正确地址>` 直接修正。

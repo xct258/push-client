@@ -10,6 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Version 客户端版本（启动横幅、version 命令、GUI 共用，确认跑的是不是最新构建）。
+const Version = "v0.4.0"
+
 // Config Windows 客户端全部配置。优先级：命令行旗标 > 环境变量 > 配置文件 > 默认值。
 type Config struct {
 	ServerURL     string   `yaml:"server_url"`     // push-server HTTP 地址，如 http://127.0.0.1:8383

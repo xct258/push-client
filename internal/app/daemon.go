@@ -19,9 +19,6 @@ import (
 	"github.com/xct258/push-client/internal/notify"
 )
 
-// Version 客户端版本（启动横幅与 version 命令共用，确认 Windows 上跑的是不是最新构建）。
-const Version = "v0.3.0"
-
 // Daemon 常驻实例：持有可替换的 MQTT 客户端，支持运行时 set 改配置并重连。
 type Daemon struct {
 	cfg    *config.Config
@@ -41,7 +38,7 @@ func RunDaemon(cfg *config.Config) int {
 func (d *Daemon) run() int {
 	cfg := d.cfg
 	fmt.Printf("push-client %s 启动中…\n  HTTP: %s\n  MQTT: %s\n  订阅: %v\n  反馈: %s\n  配置文件: %s\n",
-		Version, cfg.ServerURL, cfg.BrokerAddr(), cfg.SubscribeTopics(), cfg.FeedbackTopic, cfg.ConfigFile)
+		config.Version, cfg.ServerURL, cfg.BrokerAddr(), cfg.SubscribeTopics(), cfg.FeedbackTopic, cfg.ConfigFile)
 
 	// 首次运行（无配置文件）或 -setup：进软件内交互配置向导
 	if !cfg.NoSetup && (cfg.ForceSetup || !cfg.ConfigFound) {

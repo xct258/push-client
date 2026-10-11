@@ -32,6 +32,7 @@ import (
 	"github.com/xct258/push-client/internal/api"
 	"github.com/xct258/push-client/internal/app"
 	"github.com/xct258/push-client/internal/config"
+	"github.com/xct258/push-client/internal/gui"
 	"github.com/xct258/push-client/internal/mqttc"
 )
 
@@ -42,7 +43,9 @@ func usage() {
   push-client [全局旗标] <命令> [参数]
 
 命令:
-  daemon                  常驻订阅+弹窗+补拉+交互回执（默认，首次运行进配置向导）
+  （无参数）              图形界面（默认，双击直接用）
+  gui                     图形界面
+  daemon                  命令行常驻模式（无头/服务用，首次运行进配置向导）
   config                  交互修改配置并保存（改 MQTT 地址用这个）
   tasks                   查询定时任务
   records                 查询推送记录
@@ -76,14 +79,14 @@ func usage() {
 }
 
 func main() {
-	// 无子命令默认 daemon（方便双击运行 push-client.exe）
+	// 无子命令默认进图形界面（Windows 双击场景）；无头/服务用 daemon
 	raw := os.Args[1:]
 	if len(raw) == 0 {
-		raw = []string{"daemon"}
+		raw = []string{"gui"}
 	}
 	// 切分子命令：第一个命中已知命令名的词即子命令（避免 -server <url> 的值被误判）。
 	known := map[string]bool{
-		"daemon": true, "tasks": true, "records": true, "done": true,
+		"gui": true, "daemon": true, "tasks": true, "records": true, "done": true,
 		"snooze": true, "push": true, "health": true, "help": true,
 		"version": true, "config": true,
 		"-h": true, "--help": true, "-help": true,
@@ -106,8 +109,8 @@ func main() {
 			cmdArgs = nil
 		}
 	} else {
-		// 全是旗标 -> 默认 daemon
-		cmd = "daemon"
+		// 全是旗标 -> 默认图形界面
+		cmd = "gui"
 	}
 
 	cfg, _, err := config.Load(globalArgs)
@@ -124,6 +127,8 @@ func main() {
 	rest := api.New(cfg.ServerURL, cfg.PushToken)
 	code := 0
 	switch cmd {
+	case "gui":
+		code = gui.Run(cfg)
 	case "daemon":
 		code = app.RunDaemon(cfg)
 	case "health":
@@ -145,7 +150,7 @@ func main() {
 	case "push":
 		code = runPush(rest, cmdArgs)
 	case "version":
-		fmt.Println("push-client", app.Version)
+		fmt.Println("push-client", config.Version)
 	case "config":
 		app.SetupWizard(cfg)
 	case "help", "-h", "--help", "-help":
